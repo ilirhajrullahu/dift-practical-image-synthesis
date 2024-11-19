@@ -1,15 +1,26 @@
-from diffusers import StableDiffusionPipeline
-import torch
-import torch.nn as nn
+#from diffusers import StableDiffusionPipeline
+#import torch
+#import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Any, Callable, Dict, List, Optional, Union
-from diffusers.models.unet_2d_condition import UNet2DConditionModel
+from diffusers.models import UNet2DConditionModel
 from diffusers import DDIMScheduler
 import gc
 import os
 from PIL import Image
 from torchvision.transforms import PILToTensor
+
+from diffusers import StableDiffusionPipeline
+from transformers import PreTrainedModel, PreTrainedTokenizer
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from safetensors.torch import load_file
+from diffusers.models import AutoencoderKL
+from transformers import CLIPTokenizer, CLIPTextModel
+
 
 class MyUNet2DConditionModel(UNet2DConditionModel):
     def forward(
@@ -188,65 +199,62 @@ class OneStepSDPipeline(StableDiffusionPipeline):
 
 
 class SDFeaturizer:
-    def __init__(self, sd_id='stabilityai/stable-diffusion-2-1', null_prompt=''):
-        unet = MyUNet2DConditionModel.from_pretrained(sd_id, subfolder="unet")
-        onestep_pipe = OneStepSDPipeline.from_pretrained(sd_id, unet=unet, safety_checker=None)
-        onestep_pipe.vae.decoder = None
-        onestep_pipe.scheduler = DDIMScheduler.from_pretrained(sd_id, subfolder="scheduler")
-        gc.collect()
-        onestep_pipe = onestep_pipe.to("cuda")
-        onestep_pipe.enable_attention_slicing()
-        onestep_pipe.enable_xformers_memory_efficient_attention()
-        null_prompt_embeds = onestep_pipe._encode_prompt(
-            prompt=null_prompt,
-            device='cuda',
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=False) # [1, 77, dim]
+    def __init__(self, model_path='./sd3_medium.safetensors', null_prompt=''):
+        """
+        Initialize the SDFeaturizer for Stable Diffusion 3.
+        """
+        # Load model weights from safetensors file
+        state_dict = load_file(model_path)
 
-        self.null_prompt_embeds = null_prompt_embeds
-        self.null_prompt = null_prompt
-        self.pipe = onestep_pipe
+        # Initialize MM-DiT (U-Net equivalent)
+        #self.mm_dit = self._initialize_mm_dit(state_dict)
 
-    @torch.no_grad()
-    def forward(self,
-                img_tensor,
-                prompt='',
-                t=261,
-                up_ft_index=1,
-                ensemble_size=8):
-        '''
-        Args:
-            img_tensor: should be a single torch tensor in the shape of [1, C, H, W] or [C, H, W]
-            prompt: the prompt to use, a string
-            t: the time step to use, should be an int in the range of [0, 1000]
-            up_ft_index: which upsampling block of the U-Net to extract feature, you can choose [0, 1, 2, 3]
-            ensemble_size: the number of repeated images used in the batch to extract features
-        Return:
-            unet_ft: a torch tensor in the shape of [1, c, h, w]
-        '''
-        img_tensor = img_tensor.repeat(ensemble_size, 1, 1, 1).cuda() # ensem, c, h, w
-        if prompt == self.null_prompt:
-            prompt_embeds = self.null_prompt_embeds
-        else:
-            prompt_embeds = self.pipe._encode_prompt(
-                prompt=prompt,
-                device='cuda',
-                num_images_per_prompt=1,
-                do_classifier_free_guidance=False) # [1, 77, dim]
-        prompt_embeds = prompt_embeds.repeat(ensemble_size, 1, 1)
-        unet_ft_all = self.pipe(
-            img_tensor=img_tensor,
-            t=t,
-            up_ft_indices=[up_ft_index],
-            prompt_embeds=prompt_embeds)
-        unet_ft = unet_ft_all['up_ft'][up_ft_index] # ensem, c, h, w
-        unet_ft = unet_ft.mean(0, keepdim=True) # 1,c,h,w
-        return unet_ft
+        #Use .half() for memory efficiency (mixed precision)
+        self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
+
+        # Load VAE for latent encoding
+        # Replace the VAE loading in the initializer
+        #self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda")
+
+        #Use .half() for memory efficiency
+        self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda").half()
+
+        # Load CLIP tokenizer and text encoder
+        self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
+
+        # Scheduler (for diffusion steps)
+        self.scheduler = DDIMScheduler.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="scheduler")
+
+        # Prepare null prompt embedding
+        self.null_prompt_embeds = self.get_prompt_embedding(null_prompt)
+
+    def _initialize_mm_dit(self, state_dict):
+        """
+        Initialize the MM-DiT (transformer-based U-Net) from the provided state_dict.
+        """
+        # Example configuration for MM-DiT (customize as per the architecture)
+        mm_dit = torch.nn.Transformer(
+            d_model=4096,  # Adjust dimensions
+            nhead=16,      # Number of attention heads
+            num_encoder_layers=24,
+            num_decoder_layers=24,
+            dim_feedforward=8192,
+        ).to("cuda")
+        mm_dit.load_state_dict(state_dict, strict=False)
+        return mm_dit
+
+    def get_prompt_embedding(self, prompt):
+        """
+        Encode the given text prompt using CLIP.
+        """
+        inputs = self.tokenizer(prompt, return_tensors="pt", padding="max_length", truncation=True).to("cuda")
+        return self.text_encoder(**inputs).last_hidden_state
 
 
 class SDFeaturizer4Eval(SDFeaturizer):
     def __init__(self, sd_id='stabilityai/stable-diffusion-2-1', null_prompt='', cat_list=[]):
-        super().__init__(sd_id, null_prompt)
+        super().__init__(model_path='sd3_medium.safetensors', null_prompt=null_prompt)
         with torch.no_grad():
             cat2prompt_embeds = {}
             for cat in cat_list:
