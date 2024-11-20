@@ -171,3 +171,4 @@ superpoint-1k.zip
 SPair-71k.tar.gz
 SPair-71k/
 ./guided-diffusion/models/256x256_diffusion_uncond.pt
+sd3_medium.safetensors
