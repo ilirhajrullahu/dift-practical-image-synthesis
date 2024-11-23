@@ -72,11 +72,11 @@ class SDFeaturizer:
         torch.cuda.empty_cache()
         gc.collect()
 
-        # Load CLIP tokenizer and text encoder
+        # Load CLIP tokenizer and text encoder (brauchen wir doch nicht?)
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
         self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
 
-        # Scheduler (for diffusion steps)
+        # Scheduler (for diffusion steps) (brauchen wir das?)
         self.scheduler = DDIMScheduler.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="scheduler")
 
         # Prepare null prompt embedding
@@ -143,6 +143,10 @@ class SDFeaturizer:
 
         #img_tensor = img_tensor.unsqueeze(0)  # Ensure batch size is 1
 
+        ############################################################################################
+        ## One Step Pipeline übernehmen, anpassen und verwenden, statt in forwards integrieren?
+        ############################################################################################
+
         # Encode the image to latent space
         with torch.cuda.amp.autocast():
             latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
@@ -161,6 +165,8 @@ class SDFeaturizer:
 
         # Process the noisy latents through MM-DiT
         with torch.cuda.amp.autocast():
+            print("noisy_latents",noisy_latents.shape)
+            print("prompt_embeds",prompt_embeds.shape)
             features = self.mm_dit(noisy_latents, prompt_embeds)
 
         # Clear unused memory
