@@ -21,14 +21,17 @@ from transformers import PreTrainedModel, PreTrainedTokenizer
 import gc
 
 from safetensors.torch import load_file
-from diffusers.models.autoencoder_kl import AutoencoderKL
 from transformers import CLIPTokenizer, CLIPTextModel
+from diffusers.models.autoencoder_kl import AutoencoderKL
+from typing import Dict, Optional, Any
 
 
 class SDFeaturizer:
-    def __init__(self, model_path, null_prompt=""):
+    def __init__(self, model_path: str, null_prompt: str = ""):
         """
-        Initialize the SDFeaturizer for Stable Diffusion 3 with memory-efficient settings.
+        Initialize the SDFeaturizer for Stable Diffusion 3.
+        :param model_path: Path to the .safetensors file containing the MM-DiT weights.
+        :param null_prompt: Optional prompt to use as a null reference.
         """
 
         # Set the environment variable to reduce memory fragmentations 
@@ -74,7 +77,7 @@ class SDFeaturizer:
 
         # Load CLIP tokenizer and text encoder (brauchen wir doch nicht?)
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
+        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda").half()
 
         # Scheduler (for diffusion steps) (brauchen wir das?)
         self.scheduler = DDIMScheduler.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="scheduler")
@@ -90,70 +93,69 @@ class SDFeaturizer:
         """
         Initialize the MM-DiT (transformer-based model) from the provided state_dict.
         """
-        with torch.no_grad():
-            mm_dit = nn.Transformer(
-            d_model=4096,  # Adjust to match latent and embedding dimensions
+        mm_dit = nn.Transformer(
+            d_model=4096,
             nhead=16,
             num_encoder_layers=24,
             num_decoder_layers=24,
             dim_feedforward=8192,
-            )
-    
-        # Enable gradient checkpointing
-        #mm_dit.gradient_checkpointing_enable()
-
-        # Move model to CUDA and convert to half-precision
-        #mm_dit = mm_dit.to("cuda").half()
+            dropout=0.1,
+        )
+        
+        
         mm_dit = mm_dit.half().to("cuda")
-
-        #self.mm_dit.load_state_dict(state_dict, strict=False)
-        #self.mm_dit = self.mm_dit.to("cuda", non_blocking=True).half()
-
         # Clear unused memory
         torch.cuda.empty_cache()
         gc.collect()
-
-        # Load the state_dict into MM-DiT
         mm_dit.load_state_dict(state_dict, strict=False)
         return mm_dit
 
-    def get_prompt_embedding(self, prompt):
+    def get_prompt_embedding(self, prompt: str) -> torch.Tensor:
         """
-        Encode the given text prompt using CLIP.
+        Generate text embeddings for a given prompt using CLIP's text encoder.
+        :param prompt: Text prompt for embedding.
+        :return: Tensor of shape (batch_size, seq_len, d_model).
         """
-        inputs = self.tokenizer(prompt, return_tensors="pt", padding="max_length", truncation=True).to("cuda")
+        inputs = self.tokenizer([prompt], return_tensors="pt", padding=True, truncation=True).to("cuda")
         return self.text_encoder(**inputs).last_hidden_state
 
-    def _project_to_d_model(self, tensor, target_dim):
+    def _align_sequence_lengths(self, noisy_latents: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         """
-        Project tensor to the target dimension using a linear layer.
+        Align the sequence lengths of noisy latents and prompt embeddings by padding or truncation.
         """
-        input_dim = tensor.size(-1)
-        if input_dim != target_dim:
-            projection_layer = nn.Linear(input_dim, target_dim).to("cuda").half()
-            tensor = tensor.to(dtype=torch.float16)  # Convert to half-precision
-            tensor = projection_layer(tensor)
-        return tensor
+        latent_len = noisy_latents.size(1)
+        prompt_len = prompt_embeds.size(1)
 
-    @torch.no_grad()
+        if latent_len > prompt_len:
+            # Pad prompt embeddings
+            padding = torch.zeros((prompt_embeds.size(0), latent_len - prompt_len, prompt_embeds.size(2)),
+                                  device=prompt_embeds.device, dtype=prompt_embeds.dtype)
+            prompt_embeds = torch.cat([prompt_embeds, padding], dim=1)
+        elif prompt_len > latent_len:
+            # Pad noisy latents
+            padding = torch.zeros((noisy_latents.size(0), prompt_len - latent_len, noisy_latents.size(2)),
+                                  device=noisy_latents.device, dtype=noisy_latents.dtype)
+            noisy_latents = torch.cat([noisy_latents, padding], dim=1)
+
+        return noisy_latents, prompt_embeds
+
     def forward(self, img_tensor, prompt="", t=500):
         """
-        Extract features from an image using MM-DiT.
+        Forward pass to extract features from MM-DiT.
+        :param img_tensor: Tensor of shape [1, C, H, W].
+        :param prompt: Text prompt for conditioning.
+        :param t: Timestep for noise addition.
+        :return: Features extracted by MM-DiT.
         """
+        # Ensure the input tensor matches the precision of the model (Half)
+        img_tensor = img_tensor.half()
 
-        #img_tensor = img_tensor.unsqueeze(0)  # Ensure batch size is 1
+        # Encode image into latent space
+        latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
 
-        ############################################################################################
-        ## One Step Pipeline übernehmen, anpassen und verwenden, statt in forwards integrieren?
-        ############################################################################################
-
-        # Encode the image to latent space
-        with torch.cuda.amp.autocast():
-            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
-
-        # Add noise to the latents
-        noise = torch.randn_like(latents).to("cuda")
-        noisy_latents = latents + noise * t
+        # Add noise to latents for the specified timestep
+        noise = torch.randn_like(latents)
+        noisy_latents = self.scheduler.add_noise(latents, noise, t)
 
         # Flatten and project noisy latents to match d_model
         noisy_latents = noisy_latents.flatten(2).transpose(1, 2)  # Shape: (batch_size, seq_len, latent_dim)
@@ -161,16 +163,25 @@ class SDFeaturizer:
 
         # Use null prompt embeddings if no prompt is provided
         prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
-        prompt_embeds = self._project_to_d_model(prompt_embeds, self.mm_dit.d_model)
 
         # Process the noisy latents through MM-DiT
         with torch.cuda.amp.autocast():
-            print("noisy_latents",noisy_latents.shape)
-            print("prompt_embeds",prompt_embeds.shape)
             features = self.mm_dit(noisy_latents, prompt_embeds)
 
         # Clear unused memory
         torch.cuda.empty_cache()
-        gc.collect()
 
         return features
+
+    def _project_to_d_model(self, tensor: torch.Tensor, target_dim: int) -> torch.Tensor:
+        """
+        Project input tensor to the target dimension if required.
+        :param tensor: Input tensor of shape (batch_size, seq_len, input_dim).
+        :param target_dim: Target dimension for projection.
+        :return: Projected tensor of shape (batch_size, seq_len, target_dim).
+        """
+        input_dim = tensor.size(-1)
+        if input_dim != target_dim:
+            projection_layer = nn.Linear(input_dim, target_dim).to("cuda").half()
+            tensor = projection_layer(tensor)
+        return tensor
