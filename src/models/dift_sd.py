@@ -23,7 +23,8 @@ import gc
 from safetensors.torch import load_file
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers.models.autoencoder_kl import AutoencoderKL
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple, List
+
 
 
 class SDFeaturizer:
@@ -139,39 +140,56 @@ class SDFeaturizer:
 
         return noisy_latents, prompt_embeds
 
-    def forward(self, img_tensor, prompt="", t=500):
-        """
-        Forward pass to extract features from MM-DiT.
-        :param img_tensor: Tensor of shape [1, C, H, W].
-        :param prompt: Text prompt for conditioning.
-        :param t: Timestep for noise addition.
-        :return: Features extracted by MM-DiT.
-        """
-        # Ensure the input tensor matches the precision of the model (Half)
-        img_tensor = img_tensor.half()
+    def forward(self, img_tensor, prompt="", t=261):
+      """
+      Forward pass to extract features from MM-DiT.
+      :param img_tensor: Tensor of shape [1, C, H, W].
+      :param prompt: Text prompt for conditioning.
+      :param t: Timestep for noise addition.
+      :return: Features extracted by MM-DiT.
+      """
+      # Ensure the input tensor matches the precision of the model
+      img_tensor = img_tensor.half().to("cuda")
 
-        # Encode image into latent space
-        latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
+      # Encode image into latent space
+      with torch.no_grad():
+          latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
 
-        # Add noise to latents for the specified timestep
-        noise = torch.randn_like(latents)
-        noisy_latents = self.scheduler.add_noise(latents, noise, t)
+      # Add noise to latents for the specified timestep
+      t_tensor = torch.tensor([t], device=latents.device).long()
+      noise = torch.randn_like(latents)
+      noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
 
-        # Flatten and project noisy latents to match d_model
-        noisy_latents = noisy_latents.flatten(2).transpose(1, 2)  # Shape: (batch_size, seq_len, latent_dim)
-        noisy_latents = self._project_to_d_model(noisy_latents, self.mm_dit.d_model)
+      # Reshape latents to transformer-friendly format
+      b, c, h, w = noisy_latents.shape
+      noisy_latents = noisy_latents.view(b, h * w, c)
 
-        # Use null prompt embeddings if no prompt is provided
-        prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
+      # Project latents to match MM-DiT's d_model dimension
+      if noisy_latents.size(-1) != self.mm_dit.d_model:
+          projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda").half()
+          noisy_latents = projector(noisy_latents)
 
-        # Process the noisy latents through MM-DiT
-        with torch.cuda.amp.autocast():
-            features = self.mm_dit(noisy_latents, prompt_embeds)
+      # Get prompt embeddings
+      prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
 
-        # Clear unused memory
-        torch.cuda.empty_cache()
+      # Align sequence lengths (padding or truncation)
+      noisy_latents, prompt_embeds = self._align_sequence_lengths(noisy_latents, prompt_embeds)
 
-        return features
+
+      print(f"Noisy latents shape: {noisy_latents.shape}")
+      print(f"Prompt embeds shape: {prompt_embeds.shape}")
+
+
+      # Process the latents and prompt embeddings through MM-DiT
+      with torch.cuda.amp.autocast():
+          features = self.mm_dit(noisy_latents, prompt_embeds)
+
+      # Clear unused memory
+      torch.cuda.empty_cache()
+      gc.collect()
+
+      return features
+
 
     def _project_to_d_model(self, tensor: torch.Tensor, target_dim: int) -> torch.Tensor:
         """
@@ -182,6 +200,6 @@ class SDFeaturizer:
         """
         input_dim = tensor.size(-1)
         if input_dim != target_dim:
-            projection_layer = nn.Linear(input_dim, target_dim).to("cuda").half()
+            projection_layer = nn.Linear(input_dim, target_dim).to("cuda")
             tensor = projection_layer(tensor)
         return tensor
