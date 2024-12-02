@@ -95,11 +95,11 @@ class SDFeaturizer:
         Initialize the MM-DiT (transformer-based model) from the provided state_dict.
         """
         mm_dit = nn.Transformer(
-            d_model=4096,
+            d_model=1024,
             nhead=16,
             num_encoder_layers=24,
             num_decoder_layers=24,
-            dim_feedforward=8192,
+            dim_feedforward=2048,
             dropout=0.1,
         )
         
@@ -171,6 +171,10 @@ class SDFeaturizer:
 
       # Get prompt embeddings
       prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
+      
+      if prompt_embeds.size(-1) != self.mm_dit.d_model:
+          projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda").half()
+          prompt_embeds = projector(prompt_embeds)
 
       # Align sequence lengths (padding or truncation)
       noisy_latents, prompt_embeds = self._align_sequence_lengths(noisy_latents, prompt_embeds)
