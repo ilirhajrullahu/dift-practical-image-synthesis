@@ -27,15 +27,22 @@ class Demo:
             else:
                 axes[i].set_title('target image')
 
-        num_channel = self.ft.size(1)
+        num_channel = self.ft.size(2)
 
         def onclick(event):
             if event.inaxes == axes[0]:
                 with torch.no_grad():
 
                     x, y = int(np.round(event.xdata)), int(np.round(event.ydata))
-
-                    src_ft = self.ft[0].unsqueeze(0)
+                    print(self.ft.shape) # 2D 
+                    #src_ft = self.ft[0].unsqueeze(0) # -> 3D
+                  
+                    
+                    batch_size, hw, channels = self.ft.shape  # Extract dimensions
+                    h = w = int(hw**0.5)  # Assume the height and width are equal
+                    src_ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
+                    print(src_ft.shape)
+                    self.ft = src_ft
                     src_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft)
                     src_vec = src_ft[0, :, y, x].view(1, num_channel)  # 1, C
 
