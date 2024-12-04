@@ -34,37 +34,36 @@ class Demo:
                 with torch.no_grad():
 
                     x, y = int(np.round(event.xdata)), int(np.round(event.ydata))
-                    print(self.ft.shape) # 2D 
-                    #src_ft = self.ft[0].unsqueeze(0) # -> 3D
+                    print(f"self.ft shape: {self.ft.shape}")
 
+                    # Process self.ft without modifying it
                     if len(self.ft.shape) == 3:
                         batch_size, hw, channels = self.ft.shape  # Extract dimensions
                         h = w = int(hw**0.5)  # Assume the height and width are equal
                         src_ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
                     else:
-                        src_ft = self.ft[0].unsqueeze(0)  # -> 3D
+                        src_ft = self.ft  # Assuming it's already [batch_size, channels, h, w]
 
                     print(f"src_ft shape: {src_ft.shape}")
 
-                    self.ft = src_ft
-                    src_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft)
-                    src_vec = src_ft[0, :, y, x].view(1, num_channel)  # 1, C
-
+                    # Process the source feature tensor
+                    src_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft[0].unsqueeze(0))
+                    src_vec = src_ft_resized[0, :, y, x].view(1, num_channel)  # Shape: [1, C]
                     print(f"src_vec shape: {src_vec.shape}")
-                    del src_ft
+                    #del src_ft
                     gc.collect()
                     torch.cuda.empty_cache()
 
-                    trg_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W
-                    trg_vec = trg_ft.view(self.num_imgs - 1, num_channel, -1) # N, C, HW
-
+                    # Process the target feature tensors
+                    trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft[1:])
+                    trg_vec = trg_ft_resized.view(self.num_imgs - 1, num_channel, -1)  # Shape: [N, C, HW]
                     print(f"trg_vec shape: {trg_vec.shape}")
-                    del trg_ft
+                    #del trg_ft
                     gc.collect()
                     torch.cuda.empty_cache()
-
-                    src_vec = F.normalize(src_vec)  # [1, C]
-                    trg_vec = F.normalize(trg_vec)  # [N, HW, C]
+                    # Normalize vectors
+                    src_vec = F.normalize(src_vec, dim=1)  # Shape: [1, C]
+                    trg_vec = F.normalize(trg_vec, dim=1)  # Shape: [N, C, HW]
 
                     # Matrix multiplication
                     try:
