@@ -155,6 +155,16 @@ class SDFeaturizer:
       with torch.no_grad():
           latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
 
+          
+      #######################################################  
+      ## TODO: decode for testing if vae encode/decode works
+      #######################################################  
+
+      #######################################################
+      ## TODO: noised latent von SD3 zurück rechnen lassen
+      #######################################################
+
+
       # Add noise to latents for the specified timestep
       t_tensor = torch.tensor([t], device=latents.device).long()
       noise = torch.randn_like(latents)
@@ -185,6 +195,9 @@ class SDFeaturizer:
 
 
       # Process the latents and prompt embeddings through MM-DiT
+      ###########################################################
+      ## TODO: Try to extract from different transformer layers (right now we extract them at the end)
+      ###########################################################
       with torch.cuda.amp.autocast():
           features = self.mm_dit(noisy_latents, prompt_embeds)
 
