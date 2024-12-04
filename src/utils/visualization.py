@@ -36,16 +36,21 @@ class Demo:
                     x, y = int(np.round(event.xdata)), int(np.round(event.ydata))
                     print(self.ft.shape) # 2D 
                     #src_ft = self.ft[0].unsqueeze(0) # -> 3D
-                  
-                    
-                    batch_size, hw, channels = self.ft.shape  # Extract dimensions
-                    h = w = int(hw**0.5)  # Assume the height and width are equal
-                    src_ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
-                    print(src_ft.shape)
+
+                    if len(self.ft.shape) == 3:
+                        batch_size, hw, channels = self.ft.shape  # Extract dimensions
+                        h = w = int(hw**0.5)  # Assume the height and width are equal
+                        src_ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
+                    else:
+                        src_ft = self.ft[0].unsqueeze(0)  # -> 3D
+
+                    print(f"src_ft shape: {src_ft.shape}")
+
                     self.ft = src_ft
                     src_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft)
                     src_vec = src_ft[0, :, y, x].view(1, num_channel)  # 1, C
 
+                    print(f"src_vec shape: {src_vec.shape}")
                     del src_ft
                     gc.collect()
                     torch.cuda.empty_cache()
@@ -53,13 +58,22 @@ class Demo:
                     trg_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W
                     trg_vec = trg_ft.view(self.num_imgs - 1, num_channel, -1) # N, C, HW
 
+                    print(f"trg_vec shape: {trg_vec.shape}")
                     del trg_ft
                     gc.collect()
                     torch.cuda.empty_cache()
 
-                    src_vec = F.normalize(src_vec) # 1, C
-                    trg_vec = F.normalize(trg_vec) # N, C, HW
-                    cos_map = torch.matmul(src_vec, trg_vec).view(self.num_imgs - 1, self.img_size, self.img_size).cpu().numpy() # N, H, W
+                    src_vec = F.normalize(src_vec)  # [1, C]
+                    trg_vec = F.normalize(trg_vec)  # [N, HW, C]
+
+                    # Matrix multiplication
+                    try:
+                        cos_map = torch.matmul(src_vec, trg_vec).view(self.num_imgs - 1, self.img_size, self.img_size).cpu().numpy() # N, H, W
+                    except RuntimeError as e:
+                        print(f"Error during matmul: {e}")
+                        print(f"src_vec shape: {src_vec.shape}")
+                        print(f"trg_vec shape: {trg_vec.shape}")
+                        raise
 
                     axes[0].clear()
                     axes[0].imshow(self.imgs[0])
