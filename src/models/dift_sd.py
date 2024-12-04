@@ -155,9 +155,10 @@ class SDFeaturizer:
       with torch.no_grad():
           latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
 
-          
+
       #######################################################  
       ## TODO: decode for testing if vae encode/decode works
+      ## Visualisierungen machen vom noised latent und vom decoded image
       #######################################################  
 
       #######################################################

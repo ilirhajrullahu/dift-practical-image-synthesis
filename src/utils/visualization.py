@@ -55,7 +55,8 @@ class Demo:
                     torch.cuda.empty_cache()
 
                     # Process the target feature tensors
-                    trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft[1:])
+                    trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft[1:]) # N, C, H, W
+                    #trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W ## original, was ist hier genau der Unterschied?
                     trg_vec = trg_ft_resized.view(self.num_imgs - 1, num_channel, -1)  # Shape: [N, C, HW]
                     print(f"trg_vec shape: {trg_vec.shape}")
                     #del trg_ft
