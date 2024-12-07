@@ -51,7 +51,7 @@ class SDFeaturizer:
 
         #Use .half() for memory efficiency (mixed precision)
         with torch.no_grad():
-            self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
+            self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda")
 
             #if Vram is not enough, use the following code to load the model in stages
             #self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
@@ -70,7 +70,8 @@ class SDFeaturizer:
         #self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda")
 
         #Use .half() for memory efficiency
-        self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda").half()
+        self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda")
+
 
          # Clear unused memory
         torch.cuda.empty_cache()
@@ -78,7 +79,7 @@ class SDFeaturizer:
 
         # Load CLIP tokenizer and text encoder (brauchen wir doch nicht?)
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda").half()
+        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
 
         # Scheduler (for diffusion steps) (brauchen wir das?)
         self.scheduler = DDIMScheduler.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="scheduler")
@@ -104,7 +105,7 @@ class SDFeaturizer:
         )
         
         
-        mm_dit = mm_dit.half().to("cuda")
+        mm_dit = mm_dit.to("cuda")
         # Clear unused memory
         torch.cuda.empty_cache()
         gc.collect()
@@ -141,33 +142,48 @@ class SDFeaturizer:
         return noisy_latents, prompt_embeds
 
 
-    def vae_encode(self, img_tensor):
+    def vae_encode(self, img_tensor: torch.Tensor) -> torch.Tensor:
         """
         Encode an image tensor into the VAE's latent space.
-        :param img_tensor: Tensor of shape [1, C, H, W].
-        :return: Encoded latent tensor.
+        :param img_tensor: Tensor of shape [1, C, H, W], normalized to [-1, 1].
+        :return: Encoded latent tensor of shape [1, latent_channels, latent_height, latent_width].
         """
+        assert img_tensor.ndim == 4, "Input image tensor must have shape [1, C, H, W]."
+        assert img_tensor.device == torch.device("cuda"), "Input image tensor must be on the GPU."
+
         # Ensure the input tensor matches the precision of the model
-        img_tensor = img_tensor.half().to("cuda")
+        img_tensor = img_tensor.to(dtype=torch.float32, device="cuda")  # Use full precision for encoding
 
         # Encode image into latent space
         with torch.no_grad():
             latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
 
+        # Optionally clear memory
+        torch.cuda.empty_cache()
+        gc.collect()
+
         return latents
-    
-    def vae_decode(self, latents):
+
+
+    def vae_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
         Decode a latent tensor into an image tensor.
-        :param latents: Tensor of shape [1, C, H, W].
-        :return: Decoded image tensor.
+        :param latents: Tensor of shape [1, latent_channels, latent_height, latent_width].
+        :return: Decoded image tensor of shape [1, C, H, W], normalized to [-1, 1].
         """
+        assert latents.ndim == 4, "Latent tensor must have shape [1, latent_channels, latent_height, latent_width]."
+        assert latents.device == torch.device("cuda"), "Latent tensor must be on the GPU."
+
         # Ensure the input tensor matches the precision of the model
-        latents = latents.half().to("cuda")
+        latents = latents.to(dtype=torch.float32, device="cuda")  # Use full precision for decoding
 
         # Decode latents into image space
         with torch.no_grad():
-            decoded = self.vae.decode(latents)
+            decoded = self.vae.decode(latents).sample  # Explicitly access the decoded sample if applicable
+
+        # Optionally clear memory
+        torch.cuda.empty_cache()
+        gc.collect()
 
         return decoded
 
@@ -180,7 +196,7 @@ class SDFeaturizer:
       :return: Features extracted by MM-DiT.
       """
       # Ensure the input tensor matches the precision of the model
-      img_tensor = img_tensor.half().to("cuda")
+      img_tensor = img_tensor.to("cuda")
 
       # Encode image into latent space
       with torch.no_grad():
@@ -189,7 +205,7 @@ class SDFeaturizer:
 
       #######################################################  
       ## TODO: decode for testing if vae encode/decode works
-      ## Visualisierungen machen vom noised latent und vom decoded image
+      ## Visualisierungen machen vom (noised?) latent und vom decoded image
       #######################################################  
 
       #######################################################
@@ -208,14 +224,14 @@ class SDFeaturizer:
 
       # Project latents to match MM-DiT's d_model dimension
       if noisy_latents.size(-1) != self.mm_dit.d_model:
-          projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda").half()
+          projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda")
           noisy_latents = projector(noisy_latents)
 
       # Get prompt embeddings
       prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
       
       if prompt_embeds.size(-1) != self.mm_dit.d_model:
-          projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda").half()
+          projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda")
           prompt_embeds = projector(prompt_embeds)
 
       # Align sequence lengths (padding or truncation)
