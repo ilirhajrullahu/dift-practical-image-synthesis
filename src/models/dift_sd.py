@@ -140,6 +140,37 @@ class SDFeaturizer:
 
         return noisy_latents, prompt_embeds
 
+
+    def vae_encode(self, img_tensor):
+        """
+        Encode an image tensor into the VAE's latent space.
+        :param img_tensor: Tensor of shape [1, C, H, W].
+        :return: Encoded latent tensor.
+        """
+        # Ensure the input tensor matches the precision of the model
+        img_tensor = img_tensor.half().to("cuda")
+
+        # Encode image into latent space
+        with torch.no_grad():
+            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
+
+        return latents
+    
+    def vae_decode(self, latents):
+        """
+        Decode a latent tensor into an image tensor.
+        :param latents: Tensor of shape [1, C, H, W].
+        :return: Decoded image tensor.
+        """
+        # Ensure the input tensor matches the precision of the model
+        latents = latents.half().to("cuda")
+
+        # Decode latents into image space
+        with torch.no_grad():
+            decoded = self.vae.decode(latents)
+
+        return decoded
+
     def forward(self, img_tensor, prompt="", t=261):
       """
       Forward pass to extract features from MM-DiT.
