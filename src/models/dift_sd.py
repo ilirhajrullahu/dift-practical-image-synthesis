@@ -159,8 +159,10 @@ class SDFeaturizer:
 
         # Decode latents into image space
         with torch.no_grad():
-            decoded = self.vae.decode(latents)  # Remove .sample since decode directly returns the tensor
+            #decoded = self.vae.decode(latents)  # Remove .sample since decode directly returns the tensor
+            decoded = self.vae.decode(latents / self.vae.config.scaling_factor) #Fixed the scaling factor
 
+            
         # Optionally clear memory
         torch.cuda.empty_cache()
         gc.collect()
