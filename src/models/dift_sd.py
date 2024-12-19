@@ -25,6 +25,37 @@ from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers.models.autoencoder_kl import AutoencoderKL
 from typing import Dict, Optional, Any, Tuple, List
 
+class CustomTransformer(nn.Transformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None, memory_mask=None, 
+                src_key_padding_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None,
+                encoder_layer_idx=None, decoder_layer_idx=None):
+        """
+        - encoder_layer_idx: Index of the encoder layer after which to extract features (0-based).
+        - decoder_layer_idx: Index of the decoder layer after which to extract features (0-based).
+        """
+        # Pass through encoder
+        memory = src
+        encoder_outputs = []
+        for idx, layer in enumerate(self.encoder.layers):
+            memory = layer(memory, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            encoder_outputs.append(memory)
+            if encoder_layer_idx is not None and idx == encoder_layer_idx:
+                return memory
+
+        # Pass through decoder
+        output = tgt
+        decoder_outputs = []
+        for idx, layer in enumerate(self.decoder.layers):
+            output = layer(output, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+                           tgt_key_padding_mask=tgt_key_padding_mask, memory_key_padding_mask=memory_key_padding_mask)
+            decoder_outputs.append(output)
+            if decoder_layer_idx is not None and idx == decoder_layer_idx:
+                return output
+
+        return output
 
 
 class SDFeaturizer:
@@ -51,7 +82,7 @@ class SDFeaturizer:
 
         #Use .half() for memory efficiency (mixed precision)
         with torch.no_grad():
-            self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
+            self.custom_mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
 
             #if Vram is not enough, use the following code to load the model in stages
             #self.mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
@@ -94,7 +125,7 @@ class SDFeaturizer:
         """
         Initialize the MM-DiT (transformer-based model) from the provided state_dict.
         """
-        mm_dit = nn.Transformer(
+        custom_mm_dit = CustomTransformer(
             d_model=1024,
             nhead=16,
             num_encoder_layers=24,
@@ -103,13 +134,12 @@ class SDFeaturizer:
             dropout=0.1,
         )
         
-        
-        mm_dit = mm_dit.half().to("cuda")
+        custom_mm_dit = custom_mm_dit.half().to("cuda")
         # Clear unused memory
         torch.cuda.empty_cache()
         gc.collect()
-        mm_dit.load_state_dict(state_dict, strict=False)
-        return mm_dit
+        custom_mm_dit.load_state_dict(state_dict, strict=False)
+        return custom_mm_dit
 
     def get_prompt_embedding(self, prompt: str) -> torch.Tensor:
         """
@@ -140,7 +170,7 @@ class SDFeaturizer:
 
         return noisy_latents, prompt_embeds
 
-    def forward(self, img_tensor, prompt="", t=261):
+    def forward(self, img_tensor, prompt="", t=261, encoder_layer_idx=None, decoder_layer_idx=None):
       """
       Forward pass to extract features from MM-DiT.
       :param img_tensor: Tensor of shape [1, C, H, W].
@@ -176,20 +206,19 @@ class SDFeaturizer:
       noisy_latents = noisy_latents.view(b, h * w, c)
 
       # Project latents to match MM-DiT's d_model dimension
-      if noisy_latents.size(-1) != self.mm_dit.d_model:
-          projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda").half()
+      if noisy_latents.size(-1) != self.custom_mm_dit.d_model:
+          projector = nn.Linear(noisy_latents.size(-1), self.custom_mm_dit.d_model).to("cuda").half()
           noisy_latents = projector(noisy_latents)
 
       # Get prompt embeddings
       prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
       
-      if prompt_embeds.size(-1) != self.mm_dit.d_model:
-          projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda").half()
+      if prompt_embeds.size(-1) != self.custom_mm_dit.d_model:
+          projector = nn.Linear(prompt_embeds.size(-1), self.custom_mm_dit.d_model).to("cuda").half()
           prompt_embeds = projector(prompt_embeds)
 
       # Align sequence lengths (padding or truncation)
       noisy_latents, prompt_embeds = self._align_sequence_lengths(noisy_latents, prompt_embeds)
-
 
       print(f"Noisy latents shape: {noisy_latents.shape}")
       print(f"Prompt embeds shape: {prompt_embeds.shape}")
@@ -200,7 +229,11 @@ class SDFeaturizer:
       ## TODO: Try to extract from different transformer layers (right now we extract them at the end)
       ###########################################################
       with torch.cuda.amp.autocast():
-          features = self.mm_dit(noisy_latents, prompt_embeds)
+          if encoder_layer_idx is not None:
+              features = self.custom_mm_dit(noisy_latents, prompt_embeds, encoder_layer_idx=encoder_layer_idx)
+          elif decoder_layer_idx is not None:
+              features = self.custom_mm_dit(noisy_latents, prompt_embeds, decoder_layer_idx=decoder_layer_idx)
+          features = self.custom_mm_dit(noisy_latents, prompt_embeds)
 
       # Clear unused memory
       torch.cuda.empty_cache()
