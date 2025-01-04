@@ -168,6 +168,32 @@ class SDFeaturizer:
         gc.collect()
 
         return decoded
+    
+    def get_noisy_latents(self, img_tensor: torch.Tensor, t: int) -> torch.Tensor:
+        """
+        Get noised latent tensor from the VAE for the specified timestep.
+        :param img_tensor: Tensor of shape [1, C, H, W], normalized to [-1, 1].
+        :param t: Timestep for noise addition.
+        :return: Noised latent tensor of shape [1, latent_channels, latent_height, latent_width].
+        """
+
+        # Ensure the input tensor matches the precision of the model
+        img_tensor = img_tensor.to(dtype=torch.float32, device="cuda")
+
+        # Encode image into latent space
+        with torch.no_grad():
+            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
+
+            # Add noise to latents for the specified timestep
+            t_tensor = torch.tensor([t], device=latents.device).long()
+            noise = torch.randn_like(latents)
+            noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
+        
+        # Optionally clear memory
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        return noisy_latents
 
     def forward(self, img_tensor, prompt="", t=261):
         """
@@ -186,7 +212,7 @@ class SDFeaturizer:
         ## TODO: decode for testing if vae encode/decode works -> DONE and visualized
         ## Visualisierungen machen vom latent und vom decoded image -> DONE
         ## Demo mit vae_encoded image -> DONE
-        ## TODO?: same for noised latent? Visualisieren und denoisen und wieder visualisieren? 
+        ## TODO: same for noised latent? Visualisieren und denoisen und wieder visualisieren? -> DONE
         #######################################################  
 
         #######################################################
