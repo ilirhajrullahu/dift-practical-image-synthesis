@@ -35,7 +35,8 @@ class Demo:
             else:
                 axes[i].set_title('target image')
         
-        print(self.ft.size(1))
+        print("self_ft size:", self.ft.size(1))
+        print("self_ft shape:", self.ft.shape)
         num_channel = self.ft.size(1)
 
         def onclick(event):
@@ -50,13 +51,19 @@ class Demo:
                     src_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft)
                     src_vec = src_ft[0, :, y, x].view(1, num_channel)  # 1, C
 
+                    print(f"src_ft shape: {src_ft.shape}")
+                    print(f"src_vec shape: {src_vec.shape}")
+
                     del src_ft
                     gc.collect()
                     torch.cuda.empty_cache()
 
                     trg_ft = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W
                     trg_vec = trg_ft.view(self.num_imgs - 1, num_channel, -1) # N, C, HW
-
+                    
+                    print(f"trg_ft shape: {trg_ft.shape}")
+                    
+                    print(f"trg_vec shape: {trg_vec.shape}")
                     del trg_ft
                     gc.collect()
                     torch.cuda.empty_cache()

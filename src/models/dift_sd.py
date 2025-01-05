@@ -209,7 +209,7 @@ class SDFeaturizer:
             latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
         
         #######################################################  
-        ## TODO: decode for testing if vae encode/decode works -> DONE and visualized
+        ## TODO: decode for testing if vae encode/decode works -> DONE
         ## Visualisierungen machen vom latent und vom decoded image -> DONE
         ## Demo mit vae_encoded image -> DONE
         ## TODO: same for noised latent? Visualisieren und denoisen und wieder visualisieren? -> DONE
@@ -225,7 +225,7 @@ class SDFeaturizer:
             noise = torch.randn_like(latents)
             noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
             
-            # Reshape latents to transformer-friendly format
+            # Reshape latents to transformer-friendly format  -- HIER KÖNNTE DER FEHLER LIEGEN TODO!
             b, c, h, w = noisy_latents.shape
             noisy_latents = noisy_latents.view(b, h * w, c)
         
@@ -249,7 +249,7 @@ class SDFeaturizer:
 
         # Process the latents and prompt embeddings through MM-DiT
         ###########################################################
-        ## TODO: Try to extract from different transformer layers (right now we extract them at the end)
+        ## TODO: Try to extract from different transformer layers (right now we extract them at the end) -> DONE
         ###########################################################
         with torch.cuda.amp.autocast():
             features = self.mm_dit(noisy_latents, prompt_embeds)
