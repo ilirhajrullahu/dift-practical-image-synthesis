@@ -226,9 +226,17 @@ class SDFeaturizer:
             noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
             
             # Reshape latents to transformer-friendly format  -- HIER KÖNNTE DER FEHLER LIEGEN TODO!
+            '''
             b, c, h, w = noisy_latents.shape
             noisy_latents = noisy_latents.view(b, h * w, c)
-        
+            '''
+            B, C, H, W = noisy_latents.shape  # Batch, Channels, Height, Width
+            patch_size = 2  # SD3 paper they use 2x2 patches
+            assert H % patch_size == 0 and W % patch_size == 0 # check if they are dividable by 2
+
+            patches = noisy_latents.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
+            patches = patches.reshape(B, C, -1, patch_size * patch_size)  # Reshape into patches
+            patches = patches.permute(0, 2, 3, 1).reshape(B, -1, C * patch_size * patch_size)  # Flatten
         # Project latents to match MM-DiT's d_model dimension
         if noisy_latents.size(-1) != self.mm_dit.d_model:
             projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda")
