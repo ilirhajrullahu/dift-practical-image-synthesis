@@ -1,44 +1,33 @@
-import matplotlib.pyplot as plt
-import numpy as np
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
-from diffusers.models import UNet2DConditionModel
 from diffusers import DDIMScheduler
 import gc
 import os
-from PIL import Image
-from torchvision.transforms import PILToTensor
-
-from diffusers import StableDiffusionPipeline
-#from diffusers.models.autoencoder_kl import AutoencoderKL
-
 from diffusers import StableDiffusion3Pipeline 
 from diffusers.models import AutoencoderKL 
-
-
-from transformers import PreTrainedModel, PreTrainedTokenizer
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-
-from transformers import PreTrainedModel, PreTrainedTokenizer
 import gc
-
 from safetensors.torch import load_file
 from transformers import CLIPTokenizer, CLIPTextModel
-from typing import Dict, Optional, Any, Tuple, List
-
-from huggingface_hub import hf_hub_download
 
 
 class SDFeaturizer:
-    def __init__(self, model_path: str, sd_version: str = "2-1", null_prompt: str = "", auth_token: Optional[str] = None):
+    def __init__(
+        self, 
+        model_path: str, 
+        sd_version: str = "2-1", 
+        null_prompt: str = "", 
+        auth_token: Optional[str] = None,
+        patch_size: int = 2,
+        use_patches: bool = True
+    ):
         """
         Initialize the SDFeaturizer for Stable Diffusion 3.
         :param model_path: Path to the .safetensors file containing the MM-DiT weights.
         :param null_prompt: Optional prompt to use as a null reference.
         """
+        self.patch_size = patch_size
+        self.use_patches = use_patches
 
         # Set the environment variable to reduce memory fragmentations 
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -79,8 +68,6 @@ class SDFeaturizer:
                 ).to("cuda")
                 self.tokenizer= sd3_pipeline.tokenizer
                 self.text_encoder = sd3_pipeline.text_encoder
-                #self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-                #self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
                 self.vae= sd3_pipeline.vae
                 self.scheduler = sd3_pipeline.scheduler
 
@@ -92,7 +79,6 @@ class SDFeaturizer:
             # Clear unused memory
             torch.cuda.empty_cache()
             gc.collect()
-
 
             # Prepare null prompt embedding
             self.null_prompt_embeds = self.get_prompt_embedding(null_prompt)
@@ -162,11 +148,17 @@ class SDFeaturizer:
         img_tensor = img_tensor.to(dtype=torch.float32, device="cuda")  # Use full precision for encoding
 
         with torch.no_grad():
-            latents = self.vae.encode(img_tensor).latent_dist.sample()
-            print(f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}")
-            latents = latents * self.scaling_factor + self.shift_factor
-            print(f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}")
-            
+            if self.sd_version == "2-1":
+                latents = self.vae.encode(img_tensor).latent_dist.sample()
+                print(f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}")
+                latents = latents * self.scaling_factor 
+                print(f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}")
+            else:
+                latents = self.vae.encode(img_tensor).latent_dist.sample()
+                print(f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}")
+                latents = latents * self.scaling_factor + self.shift_factor
+                print(f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}")
+                
             # Optionally clear memory
             torch.cuda.empty_cache()
             gc.collect()
@@ -183,10 +175,17 @@ class SDFeaturizer:
 
         print(f"Latents before decoding: min={latents.min().item()}, max={latents.max().item()}")
         with torch.no_grad():
-            latents = (latents - self.shift_factor) / self.scaling_factor
-            decoded = self.vae.decode(latents)
-            decoded_sample = decoded.sample  # Extract the sample tensor
-            print(f"Decoded tensor: min={decoded_sample.min().item()}, max={decoded_sample.max().item()}")
+            if self.sd_version == "2-1":
+                latents = latents / self.scaling_factor
+                decoded = self.vae.decode(latents)
+                decoded_sample = decoded.sample  # Extract the sample tensor
+                print(f"Decoded tensor: min={decoded_sample.min().item()}, max={decoded_sample.max().item()}")
+            else:
+                latents = (latents - self.shift_factor) / self.scaling_factor
+                decoded = self.vae.decode(latents)
+                decoded_sample = decoded.sample  # Extract the sample tensor
+                print(f"Decoded tensor: min={decoded_sample.min().item()}, max={decoded_sample.max().item()}")
+
 
         # Optionally clear memory
         torch.cuda.empty_cache()
@@ -208,43 +207,10 @@ class SDFeaturizer:
 
         # Encode image into latent space
         with torch.no_grad():
-            #latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
-            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor + self.shift_factor
-
-            # Add noise to latents for the specified timestep
-            t_tensor = torch.tensor([t], device=latents.device).long()
-            noise = torch.randn_like(latents)
-
             if self.sd_version == "2-1":
-                # Add noise to latents for the specified timestep
-                t_tensor = torch.tensor([t], device=latents.device).long()
-                noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
+                latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor
             else:
-                # Add noise to latents for the specified timestep
-                timestep = self.scheduler.timesteps[t]
-                noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
-        
-        # Optionally clear memory
-        torch.cuda.empty_cache()
-        gc.collect()
-
-        return noisy_latents
-    
-    def get_noisy_latents(self, img_tensor: torch.Tensor, t: int) -> torch.Tensor:
-        """
-        Get noised latent tensor from the VAE for the specified timestep.
-        :param img_tensor: Tensor of shape [1, C, H, W], normalized to [-1, 1].
-        :param t: Timestep for noise addition.
-        :return: Noised latent tensor of shape [1, latent_channels, latent_height, latent_width].
-        """
-
-        # Ensure the input tensor matches the precision of the model
-        img_tensor = img_tensor.to(dtype=torch.float32, device="cuda")
-
-        # Encode image into latent space
-        with torch.no_grad():
-            #latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
-            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor + self.shift_factor
+                latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor + self.shift_factor
 
             # Add noise to latents for the specified timestep
             t_tensor = torch.tensor([t], device=latents.device).long()
@@ -280,81 +246,91 @@ class SDFeaturizer:
             decoded_image = self.pipeline.decode_latents(noisy_latents)
         
         return decoded_image  
+    
+    def _patch_latents(self, latents: torch.Tensor) -> torch.Tensor:
+
+        B, C, H, W = latents.size()  # Input shape
+        patch_size = self.patch_size
+
+        # Ensure H and W are divisible by patch_size
+        assert H % patch_size == 0 and W % patch_size == 0, (
+            f"Height and Width must be divisible by patch_size={patch_size}."
+        )
+
+        # Unfold the image into patches
+        patches = latents.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
+        # Shape after unfold: [B, C, num_patches_h, num_patches_w, patch_size, patch_size]
+
+        # Reshape patches into [B, num_patches, patch_size*patch_size*C]
+        patches = patches.contiguous().view(B, C, -1, patch_size * patch_size)
+        # Shape: [B, C, num_patches, patch_size*patch_size]
+
+        patches = patches.permute(0, 2, 3, 1).reshape(B, -1, C * patch_size * patch_size)
+        # Shape: [B, num_patches, C * patch_size * patch_size]
+
+        return patches    
 
 
-    def forward(self, img_tensor, prompt="", t=261):
+    def forward(self, img_tensor: torch.Tensor, prompt: str = "", t: int = 261, use_patches: Optional[bool] = None) -> torch.Tensor:
         """
         Forward pass to extract features from MM-DiT.
         :param img_tensor: Tensor of shape [1, C, H, W].
         :param prompt: Text prompt for conditioning.
         :param t: Timestep for noise addition.
+        :param use_patches: Optional boolean to override the default use_patches setting.
         :return: Features extracted by MM-DiT.
         """
+        # Determine whether to use patches for this forward pass
+        apply_patches = self.use_patches if use_patches is None else use_patches
+
         img_tensor = img_tensor.to("cuda")
-         # Encode image into latent space
-        with torch.no_grad():
-            latents = self.vae.encode(img_tensor).latent_dist.sample() * self.vae.config.scaling_factor
         
-        #######################################################  
-        ## TODO: decode for testing if vae encode/decode works -> DONE
-        ## Visualisierungen machen vom latent und vom decoded image -> DONE
-        ## Demo mit vae_encoded image -> DONE
-        ## TODO: same for noised latent? Visualisieren und denoisen und wieder visualisieren? -> DONE
-        #######################################################  
+        # Encode image into latent space
+        #with torch.no_grad():
+            #latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor + self.shift_factor
 
-        #######################################################
-        ## TODO: noised latent von SD3 zurück rechnen lassen
-        #######################################################
-            
-            
+        # Add noise to latents
+        noisy_latents = self.get_noisy_latents(img_tensor, t)
 
-            
-            noise = torch.randn_like(latents)
-            if self.sd_version == "2-1":
-                # Add noise to latents for the specified timestep
-                t_tensor = torch.tensor([t], device=latents.device).long()
-                noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
-            else:
-                # Add noise to latents for the specified timestep
-                timestep = self.scheduler.timesteps[t]
-                noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
-            
-            # Reshape latents to transformer-friendly format  -- HIER KÖNNTE DER FEHLER LIEGEN TODO!
-            '''
-            b, c, h, w = noisy_latents.shape
-            noisy_latents = noisy_latents.view(b, h * w, c)
-            '''
-            B, C, H, W = noisy_latents.shape  # Batch, Channels, Height, Width
-            patch_size = 2  # SD3 paper they use 2x2 patches
-            assert H % patch_size == 0 and W % patch_size == 0 # check if they are dividable by 2
+        if apply_patches:
+            # Patch the noisy latents
+            patches = self._patch_latents(noisy_latents)
+            # Shape of patches: [B, num_patches, C * patch_size * patch_size]
 
-            patches = noisy_latents.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
-            patches = patches.reshape(B, C, -1, patch_size * patch_size)  # Reshape into patches
-            patches = patches.permute(0, 2, 3, 1).reshape(B, -1, C * patch_size * patch_size)  # Flatten
-        # Project latents to match MM-DiT's d_model dimension
-        if noisy_latents.size(-1) != self.mm_dit.d_model:
-            projector = nn.Linear(noisy_latents.size(-1), self.mm_dit.d_model).to("cuda")
-            noisy_latents = projector(noisy_latents)
-        
+            # Project latents to match MM-DiT's d_model dimension if necessary
+            if patches.size(-1) != self.mm_dit.d_model:
+                projector = nn.Linear(patches.size(-1), self.mm_dit.d_model).to("cuda")
+                patches = projector(patches)
+
+            input_tensor = patches
+        else:
+            # Flatten the noisy_latents without patching
+            B, C, H, W = noisy_latents.shape
+            input_tensor = noisy_latents.view(B, C, H * W).permute(0, 2, 1)  # Shape: [B, H*W, C]
+
+            # Project latents to match MM-DiT's d_model dimension if necessary
+            if input_tensor.size(-1) != self.mm_dit.d_model:
+                projector = nn.Linear(input_tensor.size(-1), self.mm_dit.d_model).to("cuda")
+                input_tensor = projector(input_tensor)
+
         # Get prompt embeddings
         prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
         if prompt_embeds.size(-1) != self.mm_dit.d_model:
             projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda")
             prompt_embeds = projector(prompt_embeds)
-        
+
         # Align sequence lengths (padding or truncation)
-        noisy_latents, prompt_embeds = self._align_sequence_lengths(noisy_latents, prompt_embeds)
-        
-        print(f"Noisy latents shape: {noisy_latents.shape}")
+        input_tensor, prompt_embeds = self._align_sequence_lengths(input_tensor, prompt_embeds)
+
+        print(f"Input tensor shape: {input_tensor.shape}")
         print(f"Prompt embeds shape: {prompt_embeds.shape}")
 
-
-        # Process the latents and prompt embeddings through MM-DiT
+        # Process the inputs and prompt embeddings through MM-DiT
         ###########################################################
-        ## TODO: Try to extract from different transformer layers (right now we extract them at the end) -> DONE
+        # Extract features from MM-DiT
         ###########################################################
-        with torch.cuda.amp.autocast():
-            features = self.mm_dit(noisy_latents, prompt_embeds)
+        with torch.cuda.amp.autocast(enabled=True):
+            features = self.mm_dit(input_tensor, prompt_embeds)
         torch.cuda.empty_cache()
         gc.collect()
         return features
