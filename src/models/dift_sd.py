@@ -71,6 +71,7 @@ class SDFeaturizer:
                 self.text_encoder = sd3_pipeline.text_encoder
                 self.vae= sd3_pipeline.vae
                 self.scheduler = sd3_pipeline.scheduler
+                self.transformer = sd3_pipeline.transformer
                 del(sd3_pipeline) #delete pipeline to free up memory
 
             # Extract scaling and shift factors from VAE config
@@ -233,7 +234,62 @@ class SDFeaturizer:
 
         return noisy_latents
     
-    def process_noisy_latents(self, noisy_latents: torch.Tensor, timesteps: int = 50) -> torch.Tensor:
+    def process_noisy_latents(self, noisy_latents: torch.Tensor, timesteps: int) -> torch.Tensor:
+        """
+        Process noisy latents using the transformer and scheduler to generate a denoised image.
+        :param noisy_latents: Tensor of shape [1, 16, 64, 64].
+        :param timesteps: Number of diffusion steps to process.
+        :return: Decoded image tensor of shape [1, 3, 512, 512].
+        """
+        with torch.no_grad():
+            # Ensure noisy latents are in the correct device and dtype
+            noisy_latents = noisy_latents.to(dtype=self.pipeline.vae.dtype, device="cuda")
+
+            # Set timesteps for the scheduler
+            self.scheduler.set_timesteps(timesteps)
+
+            # Initialize latents for denoising
+            current_latents = noisy_latents.clone()
+
+            # Define projection layers for encoder_hidden_states
+            projection_layer = torch.nn.Linear(
+                self.transformer.config.caption_projection_dim, self.transformer.config.joint_attention_dim
+            ).to("cuda")
+
+            # Loop through timesteps for denoising
+            for t in self.scheduler.timesteps:
+                # Prepare timestep tensor
+                timestep_tensor = torch.tensor([int(t)], device=current_latents.device, dtype=torch.long)
+
+                # Generate pooled projections and encoder hidden states
+                batch_size = current_latents.shape[0]
+                pooled_projections = torch.zeros(
+                    (batch_size, self.transformer.config.pooled_projection_dim), device="cuda"
+                )
+                encoder_hidden_states = torch.zeros(
+                    (batch_size, 1, self.transformer.config.caption_projection_dim), device="cuda"
+                )
+
+                # Apply projection layer to match required dimension
+                encoder_hidden_states = projection_layer(encoder_hidden_states.squeeze(1)).unsqueeze(1)
+
+                # Predict noise with the transformer
+                noise_pred = self.transformer(
+                    current_latents,
+                    timestep=timestep_tensor,
+                    pooled_projections=pooled_projections,
+                    encoder_hidden_states=encoder_hidden_states,
+                ).sample
+
+                # Update latents using the scheduler
+                current_latents = self.scheduler.step(noise_pred, t, current_latents).prev_sample
+
+            # Decode the final latents back to image space
+            decoded_image = self.vae_decode(current_latents)
+
+        return decoded_image
+    
+    def process_noisy_latents_with_pipeline(self, noisy_latents: torch.Tensor, timesteps: int = 50) -> torch.Tensor:
         """
         Process noisy latents using Stable Diffusion 3 pipeline to generate an image.
         :param noisy_latents: Tensor of shape [1, 4, 64, 64].
