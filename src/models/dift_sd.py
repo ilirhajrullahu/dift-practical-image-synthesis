@@ -66,10 +66,12 @@ class SDFeaturizer:
                     use_auth_token=self.auth_token,
                     low_cpu_mem_usage=False
                 ).to("cuda")
+                self.pipeline = sd3_pipeline
                 self.tokenizer= sd3_pipeline.tokenizer
                 self.text_encoder = sd3_pipeline.text_encoder
                 self.vae= sd3_pipeline.vae
                 self.scheduler = sd3_pipeline.scheduler
+                del(sd3_pipeline) #delete pipeline to free up memory
 
             # Extract scaling and shift factors from VAE config
             self.scaling_factor = self.vae.config.scaling_factor
@@ -231,22 +233,34 @@ class SDFeaturizer:
 
         return noisy_latents
     
-    def process_noisy_latents(self, noisy_latents, timesteps=50):
+    def process_noisy_latents(self, noisy_latents: torch.Tensor, timesteps: int = 50) -> torch.Tensor:
         """
         Process noisy latents using Stable Diffusion 3 pipeline to generate an image.
         :param noisy_latents: Tensor of shape [1, 4, 64, 64].
         :param timesteps: Number of diffusion steps to process.
-        :return: Decoded image.
+        :return: Decoded image tensor of shape [1, 3, 512, 512].
         """
         with torch.no_grad():
             # Ensure noisy latents are in the correct device and format
-            noisy_latents = noisy_latents.to(dtype=torch.float16, device="cuda")
+            noisy_latents = noisy_latents.to(dtype=self.pipeline.vae.dtype, device="cuda")
             
-            # Use the pipeline to process noisy latents into an image
-            decoded_image = self.pipeline.decode_latents(noisy_latents)
-        
-        return decoded_image  
-    
+            # Pass noisy latents to the pipeline
+            result = self.pipeline(
+                prompt="",  # Empty prompt since we're processing latents directly
+                latents=noisy_latents,
+                num_inference_steps=timesteps,
+                output_type="tensor",  # Output raw tensor
+            )
+            
+            # Extract the decoded image tensor
+            decoded_image = result.images  # Tensor in [0, 1] range
+
+            # Convert to [-1, 1] range for further processing
+            decoded_image = decoded_image * 2 - 1
+
+        return decoded_image
+
+
     def _patch_latents(self, latents: torch.Tensor) -> torch.Tensor:
 
         B, C, H, W = latents.size()  # Input shape
