@@ -66,7 +66,7 @@ class SDFeaturizer:
                     use_auth_token=self.auth_token,
                     low_cpu_mem_usage=False
                 ).to("cuda")
-                self.pipeline = sd3_pipeline
+                #self.pipeline = sd3_pipeline
                 self.tokenizer= sd3_pipeline.tokenizer
                 self.text_encoder = sd3_pipeline.text_encoder
                 self.vae= sd3_pipeline.vae
