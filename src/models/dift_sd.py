@@ -243,7 +243,7 @@ class SDFeaturizer:
         """
         with torch.no_grad():
             # Ensure noisy latents are in the correct device and dtype
-            noisy_latents = noisy_latents.to(dtype=self.pipeline.vae.dtype, device="cuda")
+            noisy_latents = noisy_latents.to(dtype=self.vae.dtype, device="cuda")
 
             # Set timesteps for the scheduler
             self.scheduler.set_timesteps(timesteps)
@@ -298,7 +298,7 @@ class SDFeaturizer:
         """
         with torch.no_grad():
             # Ensure noisy latents are in the correct device and format
-            noisy_latents = noisy_latents.to(dtype=self.pipeline.vae.dtype, device="cuda")
+            noisy_latents = noisy_latents.to(dtype=self.vae.dtype, device="cuda")
             
             # Pass noisy latents to the pipeline
             result = self.pipeline(
