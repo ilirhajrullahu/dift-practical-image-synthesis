@@ -9,7 +9,7 @@ import torch.nn as nn
 import gc
 from safetensors.torch import load_file
 from transformers import CLIPTokenizer, CLIPTextModel
-
+from huggingface_hub import hf_hub_download 
 
 class SDFeaturizer:
     def __init__(
@@ -19,7 +19,8 @@ class SDFeaturizer:
         null_prompt: str = "", 
         auth_token: Optional[str] = None,
         patch_size: int = 2,
-        use_patches: bool = True
+        use_patches: bool = True,
+        safetensors_from_huggingface: bool = False
     ):
         """
         Initialize the SDFeaturizer for Stable Diffusion 3.
@@ -29,11 +30,26 @@ class SDFeaturizer:
         self.patch_size = patch_size
         self.use_patches = use_patches
 
+        self.sd_version = sd_version
+        self.auth_token = auth_token
+
+
         # Set the environment variable to reduce memory fragmentations 
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         with torch.no_grad():
+
+
             # Load model weights from safetensors file
-            state_dict = load_file(model_path)
+            if safetensors_from_huggingface:
+                # Download the safetensors file from the repository
+                file_path = hf_hub_download(
+                    repo_id="stabilityai/stable-diffusion-3-medium",  # Repository ID
+                    filename="sd3_medium.safetensors",               # File name in the repo
+                    use_auth_token=auth_token             # Replace with your Hugging Face token
+                )
+                state_dict = load_file(file_path)
+            else:
+                state_dict = load_file(model_path)
 
             # Clear unused memory
             torch.cuda.empty_cache()
@@ -46,9 +62,6 @@ class SDFeaturizer:
             # Clear unused memory
             torch.cuda.empty_cache()
             gc.collect()
-
-            self.sd_version = sd_version
-            self.auth_token = auth_token
 
             if self.sd_version == "2-1":
                 self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to("cuda")
