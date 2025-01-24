@@ -79,13 +79,13 @@ class SDFeaturizer:
                     use_auth_token=self.auth_token,
                     low_cpu_mem_usage=False
                 ).to("cuda")
-                #self.pipeline = sd3_pipeline
-                self.tokenizer= sd3_pipeline.tokenizer
-                self.text_encoder = sd3_pipeline.text_encoder
+                self.pipeline = sd3_pipeline
+                self.tokenizer= sd3_pipeline.tokenizer_3
+                self.text_encoder = sd3_pipeline.text_encoder_3
                 self.vae= sd3_pipeline.vae
                 self.scheduler = sd3_pipeline.scheduler
                 self.transformer = sd3_pipeline.transformer
-                del(sd3_pipeline) #delete pipeline to free up memory
+                del (sd3_pipeline)  # delete pipeline to free up memory
 
             # Extract scaling and shift factors from VAE config
             self.scaling_factor = self.vae.config.scaling_factor
@@ -153,7 +153,6 @@ class SDFeaturizer:
 
         return noisy_latents, prompt_embeds
 
-
     def vae_encode(self, img_tensor: torch.Tensor) -> torch.Tensor:
         """
         Encode an image tensor into the VAE's latent space.
@@ -167,14 +166,14 @@ class SDFeaturizer:
             if self.sd_version == "2-1":
                 latents = self.vae.encode(img_tensor).latent_dist.sample()
                 print(f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}")
-                latents = latents * self.scaling_factor 
+                latents = latents * self.scaling_factor
                 print(f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}")
             else:
                 latents = self.vae.encode(img_tensor).latent_dist.sample()
                 print(f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}")
                 latents = latents * self.scaling_factor + self.shift_factor
                 print(f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}")
-                
+
             # Optionally clear memory
             torch.cuda.empty_cache()
             gc.collect()
@@ -234,7 +233,6 @@ class SDFeaturizer:
 
             if self.sd_version == "2-1":
                 # Add noise to latents for the specified timestep
-                t_tensor = torch.tensor([t], device=latents.device).long()
                 noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
             else:
                 # Add noise to latents for the specified timestep
@@ -353,81 +351,112 @@ class SDFeaturizer:
 
         return patches    
 
+    # ---------------------------------------------------------------------
+    # New helper methods to keep forward(...) cleaner
+    # ---------------------------------------------------------------------
+    def _encode_and_scale(self, img_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Encode the image tensor into latents and scale/shift them depending on the SD version.
+        """
+        latents = self.vae.encode(img_tensor.to(device="cuda", dtype=torch.float32)).latent_dist.sample()
+        if self.sd_version == "2-1":
+            latents = latents * self.scaling_factor
+        else:
+            latents = latents * self.scaling_factor + self.shift_factor
+        return latents
+
+    def _add_noise_to_latents(self, latents: torch.Tensor, t: int) -> torch.Tensor:
+        """
+        Add noise to the latents for the specified timestep t.
+        """
+        noise = torch.randn_like(latents)
+        t_tensor = torch.tensor([t], device=latents.device, dtype=torch.long)
+
+        if self.sd_version == "2-1":
+            noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
+        else:
+            timestep = self.scheduler.timesteps[t]
+            noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
+
+        return noisy_latents
+
+    def _tokenize_and_encode_prompt(self, prompt: str, device: str = "cuda") -> torch.Tensor:
+        """
+        Tokenize the prompt (or use null prompt if empty), then encode with T5.
+        """
+
+        actual_prompt = prompt if prompt else ""
+        inputs = self.tokenizer([actual_prompt], return_tensors="pt", padding=True, truncation=True).to(device)
+        text_embeds = self.text_encoder(**inputs).last_hidden_state
+        return text_embeds
+
+    def _prepare_pooled(self, batch_size: int, dtype: torch.dtype, device: str) -> torch.Tensor:
+        """
+        Prepare a zero-filled pooled projection tensor (commonly used in SD3).
+        """
+        return torch.zeros(
+            (batch_size, self.transformer.config.pooled_projection_dim),
+            device=device,
+            dtype=dtype
+        )
+
+    def _run_sd3_transformer(
+        self,
+        noisy_latents: torch.Tensor,
+        text_embeds: torch.Tensor,
+        pooled_projections: torch.Tensor,
+        t_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Pass latents + text embeddings through the SD3 transformer, returning the final sample.
+        """
+        transformer_out = self.transformer(
+            hidden_states=noisy_latents,
+            encoder_hidden_states=text_embeds,
+            pooled_projections=pooled_projections,
+            timestep=t_tensor,
+            return_dict=True,
+        )
+        return transformer_out.sample
+
 
     def forward(self, img_tensor: torch.Tensor, prompt: str = "", t: int = 261, use_patches: Optional[bool] = None) -> torch.Tensor:
         """
-        Forward pass to extract features from MM-DiT.
-        :param img_tensor: Tensor of shape [1, C, H, W].
-        :param prompt: Text prompt for conditioning.
-        :param t: Timestep for noise addition.
-        :param use_patches: Optional boolean to override the default use_patches setting.
-        :return: Features extracted by MM-DiT.
+        Forward pass that:
+        1) Encodes the input image via the VAE,
+        2) Adds noise at timestep t,
+        3) Tokenizes & encodes the prompt via T5,
+        4) Passes everything through the SD3 (MM-DiT) transformer,
+        5) Returns the transformer's output latents.
+
+        Args:
+            img_tensor (torch.Tensor): Image of shape [1, 3, H, W], normalized to [-1, 1].
+            prompt (str): Prompt string to condition the transformer.
+            t (int): Timestep index for adding noise to the latents.
+            use_patches (Optional[bool]): Unused here; patching is handled inside `SD3Transformer2DModel`.
+
+        Returns:
+            torch.Tensor: Transformer's output tensor (e.g. shape [1, in_channels, H//8, W//8]).
         """
-        # Determine whether to use patches for this forward pass
-        apply_patches = self.use_patches if use_patches is None else use_patches
+        with torch.no_grad():
+            # Step A: Encode & scale the image
+            latents = self._encode_and_scale(img_tensor)
 
-        img_tensor = img_tensor.to("cuda")
-        
-        # Encode image into latent space
-        #with torch.no_grad():
-            #latents = self.vae.encode(img_tensor).latent_dist.sample() * self.scaling_factor + self.shift_factor
+            # Step B: Add noise to latents at the specified timestep
+            noisy_latents = self._add_noise_to_latents(latents, t)
+            t_tensor = torch.tensor([t], device=noisy_latents.device, dtype=torch.long)
 
-        # Add noise to latents
-        noisy_latents = self.get_noisy_latents(img_tensor, t)
+            # Step C: Tokenize & encode prompt
+            text_embeds = self._tokenize_and_encode_prompt(prompt, device="cuda")
 
-        if apply_patches:
-            # Patch the noisy latents
-            patches = self._patch_latents(noisy_latents)
-            # Shape of patches: [B, num_patches, C * patch_size * patch_size]
+            # Step D: Prepare pooled projections
+            batch_size = noisy_latents.shape[0]
+            pooled_projections = self._prepare_pooled(batch_size, noisy_latents.dtype, noisy_latents.device)
 
-            # Project latents to match MM-DiT's d_model dimension if necessary
-            if patches.size(-1) != self.mm_dit.d_model:
-                projector = nn.Linear(patches.size(-1), self.mm_dit.d_model).to("cuda")
-                patches = projector(patches)
+            # Step E: Run the SD3 transformer
+            transformer_output = self._run_sd3_transformer(
+                noisy_latents, text_embeds, pooled_projections, t_tensor
+            )
 
-            input_tensor = patches
-        else:
-            # Flatten the noisy_latents without patching
-            B, C, H, W = noisy_latents.shape
-            input_tensor = noisy_latents.view(B, C, H * W).permute(0, 2, 1)  # Shape: [B, H*W, C]
-
-            # Project latents to match MM-DiT's d_model dimension if necessary
-            if input_tensor.size(-1) != self.mm_dit.d_model:
-                projector = nn.Linear(input_tensor.size(-1), self.mm_dit.d_model).to("cuda")
-                input_tensor = projector(input_tensor)
-
-        # Get prompt embeddings
-        prompt_embeds = self.null_prompt_embeds if prompt == "" else self.get_prompt_embedding(prompt)
-        if prompt_embeds.size(-1) != self.mm_dit.d_model:
-            projector = nn.Linear(prompt_embeds.size(-1), self.mm_dit.d_model).to("cuda")
-            prompt_embeds = projector(prompt_embeds)
-
-        # Align sequence lengths (padding or truncation)
-        input_tensor, prompt_embeds = self._align_sequence_lengths(input_tensor, prompt_embeds)
-
-        print(f"Input tensor shape: {input_tensor.shape}")
-        print(f"Prompt embeds shape: {prompt_embeds.shape}")
-
-        # Process the inputs and prompt embeddings through MM-DiT
-        ###########################################################
-        # Extract features from MM-DiT
-        ###########################################################
-        with torch.cuda.amp.autocast(enabled=True):
-            features = self.mm_dit(input_tensor, prompt_embeds)
-        torch.cuda.empty_cache()
-        gc.collect()
-        return features
-
-
-    def _project_to_d_model(self, tensor: torch.Tensor, target_dim: int) -> torch.Tensor:
-        """
-        Project input tensor to the target dimension if required.
-        :param tensor: Input tensor of shape (batch_size, seq_len, input_dim).
-        :param target_dim: Target dimension for projection.
-        :return: Projected tensor of shape (batch_size, seq_len, target_dim).
-        """
-        input_dim = tensor.size(-1)
-        if input_dim != target_dim:
-            projection_layer = nn.Linear(input_dim, target_dim).to("cuda")
-            tensor = projection_layer(tensor)
-        return tensor
+        # Step F: Return the transformer's output
+        return transformer_output
