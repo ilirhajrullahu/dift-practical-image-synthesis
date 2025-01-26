@@ -5,8 +5,13 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 
-class Demo:
 
+class Demo:
+    """
+    Class for visualizing the feature tensor and the images.
+    Uses the feature tensor to compute the cosine similarity between the source feature vector and the target feature vectors.
+    Takes as input the feature tensor, the images, and the image size.
+    """
     def __init__(self, imgs, ft, img_size):
         self.ft = ft # N+1, C, H, W
         self.imgs = imgs
@@ -14,6 +19,12 @@ class Demo:
         self.img_size = img_size
 
     def plot_img_pairs(self, fig_size=3, alpha=0.45, scatter_size=70):
+        """
+        Plots the images and the cosine similarity heatmaps.
+        fig_size: size of the figure
+        alpha: transparency of the heatmap
+        scatter_size: size of the scatter plot
+        """
 
         fig, axes = plt.subplots(1, self.num_imgs, figsize=(fig_size*self.num_imgs, fig_size))
 
@@ -27,58 +38,54 @@ class Demo:
             else:
                 axes[i].set_title('target image')
 
-
-
-        # Process self.ft without modifying it
+        # Process self.ft without modifying it, if it's 4D
+        # Otherwise, assume it's 3D because of transformer permutation, and convert it to 4D
         if len(self.ft.shape) == 3:
             batch_size, hw, channels = self.ft.shape  # Extract dimensions
-            h = w = int(hw**0.5)  # Assume the height and width are equal -> ODER LIEGT HIER DER FEHLER? TODO!
+            h = w = int(hw**0.5)  # Assume the height and width are equal
             self.ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
-            print("if")
-        else:
-            src_ft = self.ft  # Assuming it's already [batch_size, channels, h, w]
-            print("else")
 
         print("self_ft size:", self.ft.size(1))
         print("self_ft shape:", self.ft.shape)
         num_channel = self.ft.size(1)
-        #num_channel = self.ft.size(2)
 
         def onclick(event):
+            """
+            Event handler for mouse click.
+            Computes the cosine similarity between the source feature vector and the target feature vectors on mouse click location.
+            """
             if event.inaxes == axes[0]:
                 with torch.no_grad():
 
                     x, y = int(np.round(event.xdata)), int(np.round(event.ydata))
 
-                    print(f"self.ft shape (before unsqueeze?): {self.ft.shape}")
+                    print(f"self.ft shape (before unsqueeze): {self.ft.shape}")
                     src_ft = self.ft[0].unsqueeze(0) # -> 3D
-                    print(f"src_ft shape (after unsqueeze?): {src_ft.shape}")
+                    print(f"src_ft shape (after unsqueeze): {src_ft.shape}")
 
                     # Process the source feature tensor
                     src_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft) #nur umbenannt kein relevanter change                    
                     src_vec = src_ft_resized[0, :, y, x].view(1, num_channel)  # Shape: [1, C], nur umbenannt kein relevanter change
                     print(f"src_ft shape: {src_ft_resized.shape}")
                     print(f"src_vec shape: {src_vec.shape}")
-                    #del src_ft #muss das auskommentiert sein?
                     gc.collect()
                     torch.cuda.empty_cache()
 
                     # Process the target feature tensors
-                    #trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft[1:]) # N, C, H, W #warum auf scr_ft statt self.ft?
-                    trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W ## original, was ist hier genau der Unterschied?
-                    trg_vec = trg_ft_resized.view(self.num_imgs - 1, num_channel, -1)  # Shape: [N, C, HW], nur umbenannt kein relevanter change
+                    trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W 
+                    trg_vec = trg_ft_resized.view(self.num_imgs - 1, num_channel, -1)  # Shape: [N, C, HW]
                     print(f"trg_ft shape: {trg_ft_resized.shape}")
                     print(f"trg_vec shape: {trg_vec.shape}")
-                    #del trg_ft  #muss das auskommentiert sein?
                     gc.collect()
                     torch.cuda.empty_cache()
+
                     # Normalize vectors
                     src_vec = F.normalize(src_vec, dim=1)  # Shape: [1, C]
                     trg_vec = F.normalize(trg_vec, dim=1)  # Shape: [N, C, HW]
 
                     # Matrix multiplication
                     try:
-                        cos_map = torch.matmul(src_vec, trg_vec).view(self.num_imgs - 1, self.img_size, self.img_size).cpu().numpy() # N, H, W is unchanged
+                        cos_map = torch.matmul(src_vec, trg_vec).view(self.num_imgs - 1, self.img_size, self.img_size).cpu().numpy() # N, H, W
                     except RuntimeError as e:
                         print(f"Error during matmul: {e}")
                         print(f"src_vec shape: {src_vec.shape}")
