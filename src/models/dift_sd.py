@@ -1,4 +1,3 @@
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 from diffusers import DDIMScheduler
 import gc
 import os
