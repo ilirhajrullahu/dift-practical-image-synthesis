@@ -7,15 +7,11 @@ import gc
 
 class SDFeaturizer:
     def __init__(
-        self, 
-        auth_token: Optional[str] = None
+        self
     ):
         """
         Initialize the SDFeaturizer for Stable Diffusion 3.
-        :param auth_token: Optional Hugging Face API token for model download.
         """
-        # Load the model from the specified path
-        self.auth_token = auth_token
 
         # Set the environment variable to reduce memory fragmentations 
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -25,7 +21,6 @@ class SDFeaturizer:
             sd3_pipeline = StableDiffusion3Pipeline.from_pretrained(
                 "stabilityai/stable-diffusion-3-medium-diffusers",
                 torch_dtype=torch.float32,
-                use_auth_token=self.auth_token,
                 low_cpu_mem_usage=False
             ).to("cuda")
             self.pipeline = sd3_pipeline
