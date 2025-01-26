@@ -1,3 +1,41 @@
+# Practical Project "Image & Video Synthesis WiSe 24/25"
+
+Authors:
+- Ludwig Degenhardt
+- Ilir Hajrullahu
+
+Supervisor:
+- Timy Phan
+
+This repository contains the code of our project.
+
+## Project Goal
+The goal of this project was to extract the DIFT (Diffusion Features) from images from Stable Diffusion 3 model. The original DIFT paper used the Stable Diffusion 2-1 Model. We tested the semantic correspondence of diffusion features extracted from Stable Diffusion 3 Model. The results show that the semantic correspondence is worse than the one from the original Stable Diffusion 2-1 Model. 
+
+## Information about the Stable Diffusion 3 Model
+We used the Stable Diffusion 3 Medium Model. The Model is already pretrained and is loaded from huggingface. The download of the model is done automatically in the google colab notebook/jupyter notebook. This may take time (depending on your internet connection).
+
+## Starting the Project
+To start the project you have these options:
+- **Option 1**: Use the provided Google Colab Notebook (**you need a huggingface account, an authentication token and granted access to the model: [SD3-medium](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers))**.
+- **Option 2**: Use the provided Jupyter Notebook (**you need sufficient GPU Power**). We personally used a A100 which has 40GB of VRAM.
+- In both options there are code cells which **automatically install** the required packages with specific versions.
+- In the first cell of the google colab notebook/jupyter notebook you can input your huggingface authentication token in the variable `my_hf_auth_token` and configure further options. 
+- If you plan to not use google colab please set the `use_google_colab` variable to `False` in the jupyter notebook.
+
+
+## Project Structure
+This repository was forked from the original repository of the project: [DIFT Repository](https://github.com/Tsingularity/dift)
+
+We modified the code to work with the Stable Diffusion 3 Model and fixed the dependencies. The only dependencies that work with our Stable Diffusion 3 Model are inside the google colab notebook/jupyter notebook.
+
+- The code has 2 main parts:
+  - The dift_sd.py file contains the code for the SD3 model.
+  - The file visualization.py contains the code for the visualization of the DIFT features and the semantic correspondence calculation.
+
+# STARTING FROM HERE IS THE DESCRIPTION OF THE ORIGINAL DIFT REPOSITORY README.
+
+
 # Diffusion Features (DIFT)
 This repository contains code for our NeurIPS 2023 paper "Emergent Correspondence from Image Diffusion".
 
