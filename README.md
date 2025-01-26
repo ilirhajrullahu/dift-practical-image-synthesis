@@ -22,6 +22,7 @@ To start the project you have these options:
 - In both options there are code cells which **automatically install** the required packages with specific versions.
 - In the first cell of the google colab notebook/jupyter notebook you can input your huggingface authentication token in the variable `my_hf_auth_token` and configure further options. 
 - If you plan to not use google colab please set the `use_google_colab` variable to `False` in the jupyter notebook.
+- If you want to test a specific image class change the variable `demo_image` to one of the specified classes above the variable in the commentary.
 
 
 ## Project Structure
