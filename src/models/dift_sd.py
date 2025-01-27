@@ -4,6 +4,40 @@ import os
 from diffusers import StableDiffusion3Pipeline 
 import torch
 import gc
+from torch import nn
+
+class CustomTransformer(nn.Transformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None, memory_mask=None, 
+                src_key_padding_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None,
+                encoder_layer_idx=None, decoder_layer_idx=None):
+        """
+        - encoder_layer_idx: Index of the encoder layer after which to extract features (0-based).
+        - decoder_layer_idx: Index of the decoder layer after which to extract features (0-based).
+        """
+        # Pass through encoder
+        memory = src
+        encoder_outputs = []
+        for idx, layer in enumerate(self.encoder.layers):
+            memory = layer(memory, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            encoder_outputs.append(memory)
+            if encoder_layer_idx is not None and idx == encoder_layer_idx:
+                return memory
+
+        # Pass through decoder
+        output = tgt
+        decoder_outputs = []
+        for idx, layer in enumerate(self.decoder.layers):
+            output = layer(output, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+                           tgt_key_padding_mask=tgt_key_padding_mask, memory_key_padding_mask=memory_key_padding_mask)
+            decoder_outputs.append(output)
+            if decoder_layer_idx is not None and idx == decoder_layer_idx:
+                return output
+
+        return output
+
 
 class SDFeaturizer:
     def __init__(
@@ -41,6 +75,13 @@ class SDFeaturizer:
             self.shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, "shift_factor") else 0.0
             print(f"VAE scaling factor: {self.scaling_factor}, shift factor: {self.shift_factor}")
 
+
+            '''
+            Only if you want to use SD3 visualisation of transformer blocks
+            '''
+
+            with torch.no_grad():
+                self.custom_mm_dit = self._initialize_mm_dit(state_dict).to("cuda").half()
             # Clear unused memory
             torch.cuda.empty_cache()
             gc.collect()
@@ -92,7 +133,27 @@ class SDFeaturizer:
         
         return decoded_sample
 
-    
+    def _initialize_mm_dit(self, state_dict):
+        """
+        Initialize the MM-DiT (transformer-based model) from the provided state_dict.
+        """
+        custom_mm_dit = CustomTransformer(
+            d_model=1024,
+            nhead=16,
+            num_encoder_layers=24,
+            num_decoder_layers=24,
+            dim_feedforward=2048,
+            dropout=0.1,
+        )
+        
+        custom_mm_dit = custom_mm_dit.half().to("cuda")
+        # Clear unused memory
+        torch.cuda.empty_cache()
+        gc.collect()
+        custom_mm_dit.load_state_dict(state_dict, strict=False)
+        return custom_mm_dit
+
+
     def get_noisy_latents(self, img_tensor: torch.Tensor, t: int) -> torch.Tensor:
         """
         Get noised latent tensor from the VAE for the specified timestep.
