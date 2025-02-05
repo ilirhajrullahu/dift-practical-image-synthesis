@@ -8,7 +8,7 @@ from safetensors.torch import load_file
 from torch import nn
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
-from diffusers import DDIMScheduler
+from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 
 
@@ -94,13 +94,17 @@ class SDFeaturizer:
             # Use .half() for memory efficiency
             self.vae = (
                 AutoencoderKL.from_pretrained(
-                    "stabilityai/stable-diffusion-2-1", subfolder="vae"
+                    "stabilityai/stable-diffusion-3-medium-diffusers", subfolder="vae"
                 )
                 .to("cuda")
                 
             )
             self.scaling_factor = self.vae.config.scaling_factor
-            self.shift_factor = 0.0
+            self.shift_factor = (
+                    self.vae.config.shift_factor
+                    if hasattr(self.vae.config, "shift_factor")
+                    else 0.0
+                )
 
             # Clear unused memory
             torch.cuda.empty_cache()
@@ -117,8 +121,8 @@ class SDFeaturizer:
             )
 
             # Scheduler (for diffusion steps)
-            self.scheduler = DDIMScheduler.from_pretrained(
-                "stabilityai/stable-diffusion-2-1", subfolder="scheduler"
+            self.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                "stabilityai/stable-diffusion-3-medium-diffusers", subfolder="scheduler"
             )
 
             # Prepare null prompt embedding
@@ -281,14 +285,9 @@ class SDFeaturizer:
             )
             noisy_latents = None
             noise = torch.randn_like(latents)
-            if self.visualise_transformer_blocks is True:
-                t_tensor = torch.tensor([t], device=latents.device).long()
-                # Add noise to latents for the specified timestep
-                noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
-            else:
-                # Add noise to latents for the specified timestep
-                timestep = self.scheduler.timesteps[t]
-                noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
+            # Add noise to latents for the specified timestep
+            timestep = self.scheduler.timesteps[t]
+            noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
         
         # Optionally clear memory
         torch.cuda.empty_cache()
@@ -384,14 +383,9 @@ class SDFeaturizer:
 
         noisy_latents = None
         noise = torch.randn_like(latents)
-        if self.visualise_transformer_blocks is True:
-            t_tensor = torch.tensor([t], device=latents.device).long()
-            # Add noise to latents for the specified timestep
-            noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
-        else:
-            # Add noise to latents for the specified timestep
-            timestep = self.scheduler.timesteps[t]
-            noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
+        # Add noise to latents for the specified timestep
+        timestep = self.scheduler.timesteps[t]
+        noisy_latents = self.scheduler.scale_noise(latents, timestep, noise)
 
         return noisy_latents
 
@@ -469,7 +463,7 @@ class SDFeaturizer:
         noise = torch.randn_like(latents)
         t_tensor = torch.tensor([t], device=latents.device).long()
         # Add noise to latents for the specified timestep
-        noisy_latents = self.scheduler.add_noise(latents, noise, t_tensor)
+        noisy_latents = self.scheduler.scale_noise(latents, noise, t_tensor)
 
         # Reshape latents to transformer-friendly format
         b, c, h, w = noisy_latents.shape
