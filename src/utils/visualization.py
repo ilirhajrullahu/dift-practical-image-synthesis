@@ -130,6 +130,12 @@ class Demo:
 
                     # If you prefer a label on the colorbar:
                     cbar.set_label('Similarity', rotation=90)
+                    plt.figure(figsize=(5,4))
+                    plt.hist(heatmap.ravel(), bins=50, color='blue', alpha=0.7)
+                    plt.title("Distribution of Heatmap Values")
+                    plt.xlabel("Heatmap Value")
+                    plt.ylabel("Frequency")
+                    plt.show()
 
                     del cos_map
                     del heatmap
