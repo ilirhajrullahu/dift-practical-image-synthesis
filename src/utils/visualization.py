@@ -112,8 +112,6 @@ class Demo:
                         axes[i].scatter(max_yx[1].item(), max_yx[0].item(), c='r', s=scatter_size)
                         axes[i].set_title('target image')
 
-                    # ----- ADD A SINGLE COLORBAR FOR ALL TARGET SUBPLOTS -----
-                    # Remove any existing colorbars before adding a new one (important in repeated clicks)
                     fig.subplots_adjust(right=0.85)  # Some extra space on the right
                     for cax in fig.axes:
                         if cax != axes[0] and cax in axes:
@@ -131,7 +129,7 @@ class Demo:
                     )
 
                     # If you prefer a label on the colorbar:
-                    cbar.set_label('Similarity (Scaled 0–255)', rotation=90)
+                    cbar.set_label('Similarity', rotation=90)
 
                     del cos_map
                     del heatmap
