@@ -112,15 +112,12 @@ class Demo:
                         axes[i].scatter(max_yx[1].item(), max_yx[0].item(), c='r', s=scatter_size)
                         axes[i].set_title('target image')
 
-                    fig.subplots_adjust(right=0.85)  # Some extra space on the right
+                    fig.subplots_adjust(right=0.85)
                     for cax in fig.axes:
                         if cax != axes[0] and cax in axes:
-                            # skip if it's just a normal subplot axis
                             continue
-                        # If the figure might have a prior colorbar axis, close it:
-                        # (some advanced usage might store colorbar axes, but typically not mandatory)
                     
-                    # Create a "ScalarMappable" with the same colormap, 0-255 range
+                    # Create a "ScalarMappable" with the same colormap, 0-1 range
                     sm = cm.ScalarMappable(norm=mcolors.Normalize(vmin=0, vmax=1), cmap='viridis')
                     cbar = fig.colorbar(
                         sm, ax=axes.ravel().tolist(),
@@ -128,8 +125,10 @@ class Demo:
                         fraction=0.02, pad=0.1
                     )
 
-                    # If you prefer a label on the colorbar:
+                    # Label for colorbar
                     cbar.set_label('Similarity', rotation=90)
+
+                    #Plot for distribution of pixel values in the heatmap
                     plt.figure(figsize=(5,4))
                     plt.hist(heatmap.ravel(), bins=50, color='blue', alpha=0.7)
                     plt.title("Distribution of Heatmap Values")
