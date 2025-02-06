@@ -47,8 +47,6 @@ class Demo:
             h = w = int(hw**0.5)  # Assume the height and width are equal
             self.ft = self.ft.permute(0, 2, 1).reshape(batch_size, channels, h, w)
 
-        print("self_ft size:", self.ft.size(1))
-        print("self_ft shape:", self.ft.shape)
         num_channel = self.ft.size(1)
 
         def onclick(event):
@@ -61,23 +59,17 @@ class Demo:
 
                     x, y = int(np.round(event.xdata)), int(np.round(event.ydata))
 
-                    print(f"self.ft shape (before unsqueeze): {self.ft.shape}")
                     src_ft = self.ft[0].unsqueeze(0) # -> 3D
-                    print(f"src_ft shape (after unsqueeze): {src_ft.shape}")
 
                     # Process the source feature tensor
                     src_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(src_ft) #nur umbenannt kein relevanter change                    
                     src_vec = src_ft_resized[0, :, y, x].view(1, num_channel)  # Shape: [1, C], nur umbenannt kein relevanter change
-                    print(f"src_ft shape: {src_ft_resized.shape}")
-                    print(f"src_vec shape: {src_vec.shape}")
                     gc.collect()
                     torch.cuda.empty_cache()
 
                     # Process the target feature tensors
                     trg_ft_resized = nn.Upsample(size=(self.img_size, self.img_size), mode='bilinear')(self.ft[1:]) # N, C, H, W 
                     trg_vec = trg_ft_resized.view(self.num_imgs - 1, num_channel, -1)  # Shape: [N, C, HW]
-                    print(f"trg_ft shape: {trg_ft_resized.shape}")
-                    print(f"trg_vec shape: {trg_vec.shape}")
                     gc.collect()
                     torch.cuda.empty_cache()
 
@@ -90,8 +82,6 @@ class Demo:
                         cos_map = torch.matmul(src_vec, trg_vec).view(self.num_imgs - 1, self.img_size, self.img_size).cpu().numpy() # N, H, W
                     except RuntimeError as e:
                         print(f"Error during matmul: {e}")
-                        print(f"src_vec shape: {src_vec.shape}")
-                        print(f"trg_vec shape: {trg_vec.shape}")
                         raise
 
                     axes[0].clear()

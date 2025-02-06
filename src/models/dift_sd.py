@@ -154,9 +154,6 @@ class SDFeaturizer:
                     if hasattr(self.vae.config, "shift_factor")
                     else 0.0
                 )
-                print(
-                    f"VAE scaling factor: {self.scaling_factor}, shift factor: {self.shift_factor}"
-                )
 
             # Clear unused memory
             torch.cuda.empty_cache()
@@ -204,13 +201,8 @@ class SDFeaturizer:
 
         with torch.no_grad():
             latents = self.vae.encode(img_tensor).latent_dist.sample()
-            print(
-                f"Latents before scaling: min={latents.min().item()}, max={latents.max().item()}"
-            )
             latents = latents * self.scaling_factor + self.shift_factor
-            print(
-                f"Latents after scaling and shifting: min={latents.min().item()}, max={latents.max().item()}"
-            )
+
 
         # Clear memory
         torch.cuda.empty_cache()
@@ -229,16 +221,10 @@ class SDFeaturizer:
             dtype=torch.float32, device="cuda"
         )  # Use full precision for decoding
 
-        print(
-            f"Latents before decoding: min={latents.min().item()}, max={latents.max().item()}"
-        )
         with torch.no_grad():
             latents = (latents - self.shift_factor) / self.scaling_factor
             decoded = self.vae.decode(latents)
             decoded_sample = decoded.sample  # Extract the sample tensor
-            print(
-                f"Decoded tensor: min={decoded_sample.min().item()}, max={decoded_sample.max().item()}"
-            )
 
         # clear memory
         torch.cuda.empty_cache()
@@ -438,7 +424,7 @@ class SDFeaturizer:
         self,
         img_tensor,
         prompt="",
-        t=261,
+        t=30,
         encoder_layer_idx=None,
         decoder_layer_idx=None,
     ):
@@ -498,8 +484,6 @@ class SDFeaturizer:
             noisy_latents, prompt_embeds
         )
 
-        print(f"Noisy latents shape: {noisy_latents.shape}")
-        print(f"Prompt embeds shape: {prompt_embeds.shape}")
 
         with torch.cuda.amp.autocast():
             if encoder_layer_idx is not None:
@@ -519,7 +503,7 @@ class SDFeaturizer:
         return features
 
     def forward(
-        self, img_tensor: torch.Tensor, prompt: str = "", t: int = 261
+        self, img_tensor: torch.Tensor, prompt: str = "", t: int = 30
     ) -> torch.Tensor:
         """
         Forward pass that:
