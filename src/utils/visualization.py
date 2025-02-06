@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
-
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 
 class Demo:
     """
@@ -30,6 +31,7 @@ class Demo:
 
         plt.tight_layout()
 
+        # Show source and target images
         for i in range(self.num_imgs):
             axes[i].imshow(self.imgs[i])
             axes[i].axis('off')
@@ -109,6 +111,27 @@ class Demo:
                         axes[i].axis('off')
                         axes[i].scatter(max_yx[1].item(), max_yx[0].item(), c='r', s=scatter_size)
                         axes[i].set_title('target image')
+
+                    # ----- ADD A SINGLE COLORBAR FOR ALL TARGET SUBPLOTS -----
+                    # Remove any existing colorbars before adding a new one (important in repeated clicks)
+                    fig.subplots_adjust(right=0.85)  # Some extra space on the right
+                    for cax in fig.axes:
+                        if cax != axes[0] and cax in axes:
+                            # skip if it's just a normal subplot axis
+                            continue
+                        # If the figure might have a prior colorbar axis, close it:
+                        # (some advanced usage might store colorbar axes, but typically not mandatory)
+                    
+                    # Create a "ScalarMappable" with the same colormap, 0-255 range
+                    sm = cm.ScalarMappable(norm=mcolors.Normalize(vmin=0, vmax=1), cmap='viridis')
+                    cbar = fig.colorbar(
+                        sm, ax=axes.ravel().tolist(),
+                        orientation='vertical',
+                        fraction=0.02, pad=0.1
+                    )
+
+                    # If you prefer a label on the colorbar:
+                    cbar.set_label('Similarity (Scaled 0–255)', rotation=90)
 
                     del cos_map
                     del heatmap
