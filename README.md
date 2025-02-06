@@ -16,9 +16,8 @@ The goal of this project was to extract the DIFT (Diffusion Features) from image
 We used the Stable Diffusion 3 Medium Model. The Model is already pretrained and is loaded from huggingface. The download of the model is done automatically in the google colab notebook/jupyter notebook. This may take time (depending on your internet connection).
 
 ## Starting the Project
-Please use a fresh Python3.10 environment.
 To start the project you have these options:
-- **Option 1**: Use the provided Jupyter Notebook locally (**you need sufficient GPU Power**). We personally used a A100 which has 40GB of VRAM in Google Colab.
+- **Option 1**: Use the provided Jupyter Notebook locally. Please use a fresh Python3.10 environment. (**you need sufficient GPU Power**). We personally used a A100 which has 40GB of VRAM in Google Colab.
 - - If you plan to not use google colab please set the `use_google_colab` variable to `False` in the first cell of the notebook.
 - **Option 2**: Import the provided Notebook into Google Colab.
 - - If you do so set the `use_google_colab` variable to `True` in the first cell of the notebook.
