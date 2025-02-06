@@ -17,15 +17,17 @@ We used the Stable Diffusion 3 Medium Model. The Model is already pretrained and
 
 ## Starting the Project
 To start the project you have these options:
-- **Option 1**: Use the provided Google Colab Notebook (**you need a huggingface account, an authentication token and granted access to the model: [SD3-medium](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers))**.
-- **Option 2**: Use the provided Jupyter Notebook (**you need sufficient GPU Power**). We personally used a A100 which has 40GB of VRAM.
+- **Option 1**: Use the provided Jupyter Notebook locally (**you need sufficient GPU Power**). We personally used a A100 which has 40GB of VRAM in Google Colab.
+- - If you plan to not use google colab please set the `use_google_colab` variable to `False` in the first cell of the notebook.
+- **Option 2**: Import the provided Notebook into Google Colab.
+- - If you do so set the `use_google_colab` variable to `True` in the first cell of the notebook.
+- **In both cases you need a huggingface account, an authentication token and granted access to the model: [SD3-medium](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers))**.
 - In both options there are code cells which **automatically install** the required packages with specific versions.
 - In the first cell of the google colab notebook/jupyter notebook you can input your huggingface authentication token in the variable `my_hf_auth_token` and configure further options. 
-- If you plan to not use google colab please set the `use_google_colab` variable to `False` in the jupyter notebook.
-- If you want to test a specific image class change the variable `demo_image` to one of the specified classes above the variable in the commentary.
-- If you want to extract the features from a specific transformer layer, chagen the variable `run_sd3_with_specific_layer` to True and `layer_id` to the layer you want (maximum 12). If you do so, please set `run_sd3_dift_demo` to False, as the two variants initialize the transformer differently (due to special methods for extracting the intermediate layers).
+- If you want to test a specific image class change the variable `demo_image` to one of the specified classes above the variable in the comment.
+- If you want to extract the features from a specific transformer layer, change the variable `run_sd3_with_specific_layer` to True and `layer_id` to the layer you want (maximum 12). If you do so, please set `run_sd3_dift_demo` to False, as the two variants initialize the transformer differently (due to special methods for extracting the intermediate layers).
 - There are other parameters in the first cell for activating/ deactivating different functionalities/ visualisations (if you do not want to run all of them).
-- Please refer to the first cell for further explanations!
+- Please refer to the first cell of the notebook for further explanations!
 
 
 ## Project Structure
